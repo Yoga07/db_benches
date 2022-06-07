@@ -1,31 +1,41 @@
+use bytes::Bytes;
+use rand::rngs::OsRng;
+use rand::Rng;
+use rayon::current_num_threads;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use bytes::Bytes;
-use rand::Rng;
-use rand::rngs::OsRng;
-use rayon::current_num_threads;
 
-use tokio::task;
-use cacache::{write, read};
+use microkv::MicroKV;
 use tokio::sync::RwLock;
-
+use tokio::task;
 
 #[tokio::main]
 async fn main() {
     let mut write_handles = vec![];
     let mut read_handles = vec![];
     let stored_keys = Arc::new(RwLock::new(vec![]));
+    let kv: Arc<RwLock<MicroKV>> = Arc::new(RwLock::new(
+        MicroKV::open_with_base_path("safe", PathBuf::from("./dbs"))
+            .unwrap()
+            .set_auto_commit(true),
+    ));
 
     let now = Instant::now();
 
-    for _ in 0..999 {
+    for _ in 0..100 {
         let stored = stored_keys.clone();
-        let handle = task::spawn(async move  {
+        let kv = kv.clone();
+        let handle = task::spawn(async move {
             // 1mb random data chunk
-            let random_value = random_bytes( 1024 * 1024);
+            let random_value = random_bytes(1024 * 1024);
             let random_key = &random_value[0..32];
 
-            let _ = write("./db", format!("{random_key:?}"), &random_value).await;
+            let write_guard = kv.write().await;
+
+            write_guard
+                .put(format!("{random_key:?}"), &random_value)
+                .unwrap();
             stored.write().await.push(format!("{random_key:?}"));
         });
 
@@ -38,9 +48,11 @@ async fn main() {
     println!("Write time: {write:?}");
 
     for key in stored_keys.clone().read().await.iter() {
+        let kv = kv.clone();
         let key_clone = key.clone();
-        let handle = task::spawn(async move  {
-            let _ = read("./db", key_clone).await.unwrap();
+        let handle = task::spawn(async move {
+            let _: Bytes = kv.read().await.get_unwrap(key_clone).unwrap();
+            // assert_eq!(read_value, key_clone.1);
         });
 
         read_handles.push(handle);
