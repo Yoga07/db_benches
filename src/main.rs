@@ -2,11 +2,10 @@ use bytes::Bytes;
 use rand::rngs::OsRng;
 use rand::Rng;
 use rayon::current_num_threads;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use microkv::MicroKV;
+use rocksdb::DB;
 use tokio::sync::RwLock;
 use tokio::task;
 
@@ -15,28 +14,22 @@ async fn main() {
     let mut write_handles = vec![];
     let mut read_handles = vec![];
     let stored_keys = Arc::new(RwLock::new(vec![]));
-    let kv: Arc<RwLock<MicroKV>> = Arc::new(RwLock::new(
-        MicroKV::open_with_base_path("safe", PathBuf::from("./dbs"))
-            .unwrap()
-            .set_auto_commit(true),
-    ));
+
+    let db = Arc::new(RwLock::new(DB::open_default("./db").unwrap()));
 
     let now = Instant::now();
 
-    for _ in 0..100 {
+    for _ in 0..1000 {
         let stored = stored_keys.clone();
-        let kv = kv.clone();
+        let db = db.clone();
         let handle = task::spawn(async move {
             // 1mb random data chunk
             let random_value = random_bytes(1024 * 1024);
             let random_key = &random_value[0..32];
 
-            let write_guard = kv.write().await;
+            stored.write().await.push(random_key.to_vec().clone());
 
-            write_guard
-                .put(format!("{random_key:?}"), &random_value)
-                .unwrap();
-            stored.write().await.push(format!("{random_key:?}"));
+            db.write().await.put(random_key, &random_value).unwrap();
         });
 
         write_handles.push(handle);
@@ -48,10 +41,10 @@ async fn main() {
     println!("Write time: {write:?}");
 
     for key in stored_keys.clone().read().await.iter() {
-        let kv = kv.clone();
+        let db = db.clone();
         let key_clone = key.clone();
         let handle = task::spawn(async move {
-            let _: Bytes = kv.read().await.get_unwrap(key_clone).unwrap();
+            let _ = db.read().await.get(&key_clone).unwrap().unwrap();
             // assert_eq!(read_value, key_clone.1);
         });
 
