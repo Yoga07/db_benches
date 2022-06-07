@@ -5,7 +5,7 @@ use rayon::current_num_threads;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rocksdb::DB;
+use persy::{Config, Persy};
 use tokio::sync::RwLock;
 use tokio::task;
 
@@ -15,7 +15,10 @@ async fn main() {
     let mut read_handles = vec![];
     let stored_keys = Arc::new(RwLock::new(vec![]));
 
-    let db = Arc::new(RwLock::new(DB::open_default("./db").unwrap()));
+    Persy::create("./db.persy").unwrap();
+    let db = Arc::new(RwLock::new(
+        Persy::open("./db.persy", Config::new()).unwrap(),
+    ));
 
     let now = Instant::now();
 
@@ -26,10 +29,18 @@ async fn main() {
             // 1mb random data chunk
             let random_value = random_bytes(1024 * 1024);
             let random_key = &random_value[0..32];
+            let key = &format!("{random_key:?}");
 
-            stored.write().await.push(random_key.to_vec().clone());
+            let mut tx = db.write().await.begin().unwrap();
 
-            db.write().await.put(random_key, &random_value).unwrap();
+            tx.create_segment(key).unwrap();
+            tx.insert(key, &random_value).unwrap();
+            let prepared = tx.prepare().unwrap();
+            prepared.commit().unwrap();
+
+            stored.write().await.push(key.clone());
+
+            // db.write().await.put(random_key, &random_value).unwrap();
         });
 
         write_handles.push(handle);
@@ -44,7 +55,7 @@ async fn main() {
         let db = db.clone();
         let key_clone = key.clone();
         let handle = task::spawn(async move {
-            let _ = db.read().await.get(&key_clone).unwrap().unwrap();
+            let x = db.read().await.scan(&key_clone).unwrap();
             // assert_eq!(read_value, key_clone.1);
         });
 
