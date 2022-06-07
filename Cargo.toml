@@ -15,7 +15,7 @@ rand = "~0.8.5"
 #microkv = "0.2.8"
 rayon = "1.5.1"
 heed = "0.11.0"
-persy = "1.2.6"
+#persy = "1.2.6"
 futures = "~0.3.13"
 
 [dependencies.tokio]
